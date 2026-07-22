@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>민원지 작성기</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M7 3h7l4 4v14H7z" />
+              <path d="M14 3v5h5" />
+              <path d="M4 7h3v14H4z" />
+              <path d="M10 13h6M10 17h6M10 9h2" />
+            </svg>
+          </span>
+          <strong>민원지 작성기</strong>
+          <span class="app-version">v1.0.0</span>
+        </div>
+        <nav class="toolstrip" aria-label="편집 도구">
+          <button class="tool-button" data-action="fit" title="선택 이미지 자동 맞춤">
+            <span class="icon">↗</span>
+            맞춤
+          </button>
+          <button class="tool-button" data-action="zoom-out" title="선택 이미지 축소">
+            <span class="icon">−</span>
+            축소
+          </button>
+          <button class="tool-button" data-action="zoom-in" title="선택 이미지 확대">
+            <span class="icon">＋</span>
+            확대
+          </button>
+          <button class="tool-button" data-action="rotate" title="선택 이미지 90도 회전">
+            <span class="icon">⟳</span>
+            회전
+          </button>
+          <button class="tool-button" data-action="circle" title="선택 칸에 원 표시 추가">
+            <span class="icon circle-icon"></span>
+            원
+          </button>
+          <button class="tool-button" data-action="dashed" title="선택 칸에 점선 원 표시 추가">
+            <span class="icon dashed-icon"></span>
+            점선
+          </button>
+          <button class="tool-button" data-action="label" title="선택 칸에 텍스트 표시 추가">
+            <span class="icon">T</span>
+            텍스트
+          </button>
+          <button class="tool-button" data-action="delete-shape" title="마지막 표시 삭제">
+            <span class="icon">⌫</span>
+            표시삭제
+          </button>
+          <button class="tool-button" data-action="delete-image" title="선택한 지도/사진 삭제">
+            <span class="icon">⌦</span>
+            이미지삭제
+          </button>
+        </nav>
+        <div class="top-actions">
+          <button class="secondary-button" id="duplicateCase">복제</button>
+          <button class="secondary-button" id="addCase">새 건 추가</button>
+          <button class="export-button" id="quickSaveButton">내보내기</button>
+        </div>
+      </header>
+
+      <aside class="sidebar">
+        <section class="panel">
+          <h2>기본 정보</h2>
+          <label>
+            제목
+            <input id="titleInput" type="text" />
+          </label>
+          <label>
+            요청일
+            <input id="dateInput" type="date" />
+          </label>
+          <label>
+            위치 주소
+            <div class="inline-control">
+              <input id="addressInput" type="text" />
+              <button id="copyAddress" class="icon-button" title="주소 복사">⧉</button>
+            </div>
+          </label>
+          <label>
+            민원 내용
+            <textarea id="requestInput" rows="1"></textarea>
+          </label>
+          <label>
+            작성자 / 담당자
+            <input id="authorInput" type="text" />
+          </label>
+          <label>
+            사진 배치
+            <select id="layoutInput">
+              <option value="single">현장사진 1장</option>
+              <option value="double">현장사진 2장</option>
+            </select>
+          </label>
+        </section>
+
+        <section class="panel">
+          <h2>지도</h2>
+          <div class="dropzone" data-slot="map">
+            <input id="mapUpload" type="file" accept="image/*" />
+            <strong>지도 이미지 업로드</strong>
+            <span>캡처 이미지를 드래그하거나 클릭</span>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>현장사진</h2>
+          <div class="dropzone" data-slot="photo1">
+            <input id="photo1Upload" type="file" accept="image/*" />
+            <strong>현장사진 1 업로드</strong>
+            <span>자동으로 칸에 맞춰집니다</span>
+          </div>
+          <div class="dropzone" data-slot="photo2" id="photo2Dropzone">
+            <input id="photo2Upload" type="file" accept="image/*" />
+            <strong>현장사진 2 업로드</strong>
+            <span>2장 배치에서 사용</span>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>메모</h2>
+          <textarea id="memoInput" rows="3"></textarea>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <div class="workspace-head">
+          <span>현재 문서 <strong id="caseCounter">1 / 1</strong></span>
+          <span><span id="selectedSlotLabel">선택: 지도</span> · Ctrl+V 붙여넣기 · Delete 삭제 · 원/점선 선택 후 이동/크기조절</span>
+        </div>
+        <div class="page-stage">
+          <article class="paper" id="paper">
+            <div class="meta-row" id="metaRow">
+              <div>
+                <strong data-field="date"></strong>
+              </div>
+              <div>
+                <span>내용 :</span>
+                <strong data-field="request"></strong>
+              </div>
+              <strong class="author-top" data-field="author"></strong>
+            </div>
+            <h1 data-field="title"></h1>
+            <div class="title-line"></div>
+            <section class="image-frame map-frame selected" data-slot="map" tabindex="0">
+              <img alt="지도 이미지" />
+              <div class="placeholder">Ctrl+V 붙여넣기 혹은 더블클릭</div>
+              <div class="shape-layer"></div>
+            </section>
+            <div class="location-row">
+              <strong>위 치 :</strong>
+              <span data-field="location"></span>
+            </div>
+            <section class="photo-grid" id="photoGrid">
+              <div class="image-frame photo-frame" data-slot="photo1" tabindex="0">
+                <img alt="현장사진 1" />
+                <div class="placeholder">현장사진 1</div>
+                <div class="shape-layer"></div>
+              </div>
+              <div class="image-frame photo-frame" data-slot="photo2" tabindex="0">
+                <img alt="현장사진 2" />
+                <div class="placeholder">현장사진 2</div>
+                <div class="shape-layer"></div>
+              </div>
+              <div class="memo-box" id="memoBox"></div>
+            </section>
+            <div class="photo-caption">현장사진</div>
+            <div class="bottom-note" data-field="memo"></div>
+          </article>
+        </div>
+      </main>
+
+      <aside class="pages">
+        <h2>여러 건</h2>
+        <div id="caseList" class="case-list"></div>
+      </aside>
+    </div>
+
+    <div id="printRoot" aria-hidden="true"></div>
+    <script src="app.js"></script>
+  </body>
+</html>
