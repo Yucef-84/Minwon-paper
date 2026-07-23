@@ -62,7 +62,8 @@
         <div class="top-actions">
           <button class="secondary-button" id="duplicateCase">복제</button>
           <button class="secondary-button" id="addCase">새 건 추가</button>
-          <button class="export-button" id="quickSaveButton">내보내기</button>
+          <button class="secondary-button" id="quickSaveButton">PDF 내보내기</button>
+          <button class="export-button" id="hwpxSaveButton">HWPX 내보내기</button>
         </div>
       </header>
 
@@ -155,7 +156,7 @@
               <div class="shape-layer"></div>
             </section>
             <div class="location-row">
-              <strong>위 치 :</strong>
+              <strong>주 소 :</strong>
               <span data-field="location"></span>
             </div>
             <section class="photo-grid" id="photoGrid">
@@ -184,6 +185,8 @@
     </div>
 
     <div id="printRoot" aria-hidden="true"></div>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="hwpx-template-data.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
