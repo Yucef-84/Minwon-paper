@@ -92,9 +92,6 @@ function bindInputs() {
     input.addEventListener(eventName, () => {
       const item = activeCase();
       const previousLayout = item.layout;
-      if (key === "memo") {
-        input.value = limitLines(input.value, 3);
-      }
       item[key] = input.type === "checkbox" ? input.checked : input.value;
       const layoutChanged = key === "layout" && previousLayout !== item.layout;
       if (layoutChanged) {
@@ -110,8 +107,12 @@ function bindInputs() {
       }
       render();
       if (layoutChanged) {
+        const caseId = item.id;
+        const expectedLayout = item.layout;
         requestAnimationFrame(() => {
-          (LAYOUT_DEFINITIONS[item.layout]?.slots || []).forEach((slot) => autoFit(slot));
+          const target = state.cases.find((candidate) => candidate.id === caseId);
+          if (!target || target.layout !== expectedLayout || activeCase().id !== caseId) return;
+          (LAYOUT_DEFINITIONS[target.layout]?.slots || []).forEach((slot) => autoFit(target, slot));
           render();
         });
       }
@@ -182,20 +183,22 @@ function limitLines(value, maxLines) {
 }
 
 function loadImageFile(file, slot) {
+  const caseId = activeCase().id;
   clearGeneratedMap(slot);
   const reader = new FileReader();
   reader.onload = () => {
     const image = new Image();
     image.onload = () => {
-      const item = activeCase();
+      const item = state.cases.find((candidate) => candidate.id === caseId);
+      if (!item) return;
       item.images[slot] = reader.result;
       item.transforms[slot] = {
         ...imageDefaults(),
         naturalWidth: image.naturalWidth,
         naturalHeight: image.naturalHeight,
       };
-      autoFit(slot);
-      selectSlot(slot);
+      autoFit(item, slot);
+      if (activeCase().id === caseId) selectSlot(slot);
       render();
     };
     image.src = reader.result;
@@ -368,8 +371,9 @@ function handleTool(action) {
   render();
 }
 
-function autoFit(slot) {
-  const item = activeCase();
+function autoFit(itemOrSlot, maybeSlot) {
+  const item = typeof itemOrSlot === "string" ? activeCase() : itemOrSlot;
+  const slot = typeof itemOrSlot === "string" ? itemOrSlot : maybeSlot;
   const frame = $(`.image-frame[data-slot="${slot}"]`);
   const transform = item.transforms[slot];
   if (!item.images[slot] || !frame || !transform.naturalWidth) return;
@@ -739,7 +743,7 @@ function buildCaseTable(item, images) {
   rows.push(row([textCell("", "현장사진", contentWidth, captionHeight, 9, 20, 6)]));
   if (noteHeight) rows.push(row([textCell("", item.memo, contentWidth, noteHeight, 10, 20, 6, 4)]));
 
-  return `<hp:tbl id="1000000001" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="0" rowCnt="${rows.length}" colCnt="6" cellSpacing="0" borderFillIDRef="3" noAdjust="0"><hp:sz width="${hwpxUnits(contentWidth)}" widthRelTo="ABSOLUTE" height="${hwpxUnits(tableHeight)}" heightRelTo="ABSOLUTE" protect="0"/><hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/><hp:outMargin left="0" right="0" top="0" bottom="0"/><hp:inMargin left="0" right="0" top="0" bottom="0"/>${rows.join("")}</hp:tbl>`;
+  return `<hp:tbl id="${hwpxIdCounters.table++}" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="0" rowCnt="${rows.length}" colCnt="6" cellSpacing="0" borderFillIDRef="3" noAdjust="0"><hp:sz width="${hwpxUnits(contentWidth)}" widthRelTo="ABSOLUTE" height="${hwpxUnits(tableHeight)}" heightRelTo="ABSOLUTE" protect="0"/><hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="0"/><hp:outMargin left="0" right="0" top="0" bottom="0"/><hp:inMargin left="0" right="0" top="0" bottom="0"/>${rows.join("")}</hp:tbl>`;
 }
 
 function buildHwpxSection(items, imagesByCase, templateSectionXml) {
