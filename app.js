@@ -1,8 +1,18 @@
-const today = new Date().toISOString().slice(0, 10);
+const APP_VERSION = "1.0.2";
+const PX_PER_MM = 96 / 25.4;
+const DOCUMENT_DEFINITIONS = { noteHeightMm: 17, contentWidthMm: 184, photoHeightMm: 101, mapHeightMm: 103 };
+const LAYOUT_DEFINITIONS = {
+  single: { slots: ["photo1"] }, double: { slots: ["photo1", "photo2"] },
+  triple: { slots: ["photo1", "photo2", "photo3"] }, quadruple: { slots: ["photo1", "photo2", "photo3", "photo4"] },
+};
+let fallbackCaseId = 0;
+const makeCaseId = () => crypto.randomUUID?.() || `minwon-${Date.now().toString(36)}-${++fallbackCaseId}`;
+const localDate = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const today = localDate();
 const photoSlots = ["photo1", "photo2", "photo3", "photo4"];
 
 const defaultCase = () => ({
-  id: crypto.randomUUID(),
+  id: makeCaseId(),
   title: "위치도 및 현장사진",
   date: today,
   address: "",
@@ -58,6 +68,19 @@ const inputs = {
   layout: $("#layoutInput"),
   memo: $("#memoInput"),
 };
+const TEXT_LIMITS = { title: [1, 48], address: [1, 64], request: [2, 34], author: [1, 16], memo: [3, 64] };
+
+function textIsValid(value, [maxLines, maxWidth]) {
+  const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n");
+  if (lines.length > maxLines || String(value || "").includes("\t")) return false;
+  const segmenter = globalThis.Intl?.Segmenter ? new Intl.Segmenter("ko", { granularity: "grapheme" }) : null;
+  if (!segmenter) return false;
+  return lines.every((line) => Array.from(segmenter.segment(line)).reduce((sum, part) => sum + (/[^\x00-\x7F]/u.test(part.segment) ? 2 : 1), 0) <= maxWidth);
+}
+
+function caseIsValid(item) {
+  return Object.entries(TEXT_LIMITS).every(([key, limit]) => textIsValid(item[key], limit));
+}
 
 function activeCase() {
   return state.cases[state.activeIndex];
@@ -68,14 +91,30 @@ function bindInputs() {
     const eventName = input.type === "checkbox" ? "change" : "input";
     input.addEventListener(eventName, () => {
       const item = activeCase();
+      const previousLayout = item.layout;
       if (key === "memo") {
         input.value = limitLines(input.value, 3);
       }
       item[key] = input.type === "checkbox" ? input.checked : input.value;
+      const layoutChanged = key === "layout" && previousLayout !== item.layout;
+      if (layoutChanged) {
+        if (!(LAYOUT_DEFINITIONS[item.layout]?.slots || []).includes(state.selectedSlot) && state.selectedSlot !== "map") {
+          state.selectedSlot = "photo1";
+          state.selectedShape = null;
+          state.drag = null;
+          state.shapeDrag = null;
+        }
+      }
       if (key === "author") {
         localStorage.setItem("minwonAuthor", input.value.trim());
       }
       render();
+      if (layoutChanged) {
+        requestAnimationFrame(() => {
+          (LAYOUT_DEFINITIONS[item.layout]?.slots || []).forEach((slot) => autoFit(slot));
+          render();
+        });
+      }
     });
   });
 
@@ -123,7 +162,7 @@ function bindInputs() {
 
   $("#duplicateCase").addEventListener("click", () => {
     const copy = JSON.parse(JSON.stringify(activeCase()));
-    copy.id = crypto.randomUUID();
+    copy.id = makeCaseId();
     state.cases.splice(state.activeIndex + 1, 0, copy);
     state.activeIndex += 1;
     render();
@@ -204,10 +243,14 @@ function render() {
   renderCaseList();
   renderSelection();
   $("#caseCounter").textContent = `${state.activeIndex + 1} / ${state.cases.length}`;
+  const valid = state.cases.every(caseIsValid);
+  $("#quickSaveButton").disabled = !valid;
+  $("#hwpxSaveButton").disabled = !valid;
 }
 
 function renderPaper(root, item) {
   root.className = `paper layout-${item.layout} show-meta`;
+  root.classList.toggle("has-note", Boolean(String(item.memo || "").trim()));
   $('[data-field="title"]', root).textContent = item.title || "위치도 및 현장사진";
   $('[data-field="date"]', root).textContent = item.date || "";
   $('[data-field="request"]', root).textContent = item.request || "";
@@ -266,8 +309,7 @@ function renderImageSlot(root, item, slot) {
 }
 
 function renderUploadVisibility(item) {
-  const visibleCounts = { single: 1, double: 2, triple: 3, quadruple: 4 };
-  const visibleCount = visibleCounts[item.layout] || 1;
+  const visibleCount = LAYOUT_DEFINITIONS[item.layout]?.slots.length || 1;
   photoSlots.forEach((slot, index) => {
     const dropzone = $(`#${slot}Dropzone`);
     if (dropzone) dropzone.hidden = index >= visibleCount;
@@ -535,6 +577,10 @@ function printAll(titleOverride) {
     const clone = $("#paper").cloneNode(true);
     renderPaper(clone, item);
     clone.id = "";
+    const permitted = new Set(visibleSlots(item));
+    $$(".image-frame", clone).forEach((frame) => {
+      if (!permitted.has(frame.dataset.slot)) frame.remove();
+    });
     $$(".image-frame", clone).forEach((frame) => frame.classList.remove("selected"));
     root.appendChild(clone);
   });
@@ -553,6 +599,7 @@ function quickSave() {
 }
 
 let hwpxTemplatePromise = null;
+let hwpxIdCounters = { table: 1000000001, object: 1147780917, instance: 74039094 };
 
 function xmlEscape(value) {
   return String(value ?? "")
@@ -565,6 +612,10 @@ function xmlEscape(value) {
 
 function hwpxUnits(mm) {
   return Math.round(mm * 283.465);
+}
+
+function visibleSlots(item) {
+  return ["map", ...(LAYOUT_DEFINITIONS[item.layout]?.slots || LAYOUT_DEFINITIONS.single.slots)];
 }
 
 function textXml(value) {
@@ -616,8 +667,8 @@ function hwpxPicture(image, widthMm, heightMm, pictureIndex) {
   const displayHeightMm = frameRatio > cellRatio ? widthMm / frameRatio : heightMm;
   const width = hwpxUnits(displayWidthMm);
   const height = hwpxUnits(displayHeightMm);
-  const objectId = 1147780917 + pictureIndex;
-  const instanceId = 74039094 + pictureIndex;
+  const objectId = hwpxIdCounters.object++;
+  const instanceId = hwpxIdCounters.instance++;
   return `<hp:run hp:charPrIDRef="0"><hp:pic id="${objectId}" zOrder="${pictureIndex}" numberingType="PICTURE" textWrap="SQUARE" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0" instid="${instanceId}" reverse="0"><hp:offset x="0" y="0"/><hp:orgSz width="${width}" height="${height}"/><hp:curSz width="${width}" height="${height}"/><hp:flip horizontal="0" vertical="0"/><hp:rotationInfo angle="0" centerX="${Math.round(width / 2)}" centerY="${Math.round(height / 2)}" rotateimage="1"/><hp:renderingInfo><hc:transMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/><hc:scaMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/><hc:rotMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/></hp:renderingInfo><hp:imgRect><hc:pt0 x="0" y="0"/><hc:pt1 x="${width}" y="0"/><hc:pt2 x="${width}" y="${height}"/><hc:pt3 x="0" y="${height}"/></hp:imgRect><hp:imgClip left="0" right="${width}" top="0" bottom="${height}"/><hp:inMargin left="0" right="0" top="0" bottom="0"/><hc:img binaryItemIDRef="${image.id}" bright="0" contrast="0" effect="REAL_PIC" alpha="0"/><hp:effects/><hp:sz width="${width}" widthRelTo="ABSOLUTE" height="${height}" heightRelTo="ABSOLUTE" protect="0"/><hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/><hp:outMargin left="0" right="0" top="0" bottom="0"/><hp:shapeComment>민원지 작성기에서 합성한 이미지</hp:shapeComment></hp:pic></hp:run>`;
 }
 
@@ -638,7 +689,7 @@ function buildCaseTable(item, images) {
   const mapHeight = 103;
   const locationHeight = 13;
   const captionHeight = 11;
-  const noteHeight = String(item.memo || "").trim() ? 15 : 0;
+  const noteHeight = String(item.memo || "").trim() ? DOCUMENT_DEFINITIONS.noteHeightMm : 0;
   const tableHeight = metaHeight + titleHeight + mapHeight + locationHeight
     + imageHeight + captionHeight + noteHeight;
   let rowIndex = 0;
@@ -762,22 +813,11 @@ function loadImage(dataUrl) {
 }
 
 function frameSize(slot, item) {
-  const frame = $(`#paper .image-frame[data-slot="${slot}"]`);
-  const rect = frame?.getBoundingClientRect();
-  // Transform offsets are stored in the element's CSS pixel coordinate system.
-  // clientWidth/clientHeight stay stable when the preview is scaled to fit the UI;
-  // boundingClientRect does not, which previously shifted the composited image.
-  if (frame?.clientWidth && frame.clientHeight) {
-    return { width: frame.clientWidth, height: frame.clientHeight };
-  }
-  if (rect?.width && rect.height) return { width: rect.width, height: rect.height };
-  const mapRect = $("#paper .map-frame")?.getBoundingClientRect();
-  const width = mapRect?.width || 680;
-  const pxPerMm = (mapRect?.height || 390) / 103;
-  return {
-    width: item.layout === "single" ? width : width / 2,
-    height: (item.layout === "triple" && slot === "photo2" ? 101 : ["triple", "quadruple"].includes(item.layout) ? 50.5 : 101) * pxPerMm,
-  };
+  if (slot === "map") return { width: Math.round(DOCUMENT_DEFINITIONS.contentWidthMm * PX_PER_MM), height: Math.round(DOCUMENT_DEFINITIONS.mapHeightMm * PX_PER_MM) };
+  const half = item.layout !== "single";
+  const tall = item.layout === "triple" && slot === "photo2";
+  const height = tall ? DOCUMENT_DEFINITIONS.photoHeightMm : (["triple", "quadruple"].includes(item.layout) ? DOCUMENT_DEFINITIONS.photoHeightMm / 2 : DOCUMENT_DEFINITIONS.photoHeightMm);
+  return { width: Math.round((half ? DOCUMENT_DEFINITIONS.contentWidthMm / 2 : DOCUMENT_DEFINITIONS.contentWidthMm) * PX_PER_MM), height: Math.round(height * PX_PER_MM) };
 }
 
 async function composeImage(item, slot) {
@@ -883,27 +923,21 @@ async function exportHwpx() {
   button.disabled = true;
   button.textContent = "HWPX 생성 중…";
   try {
+    hwpxIdCounters = { table: 1000000001, object: 1147780917, instance: 74039094 };
     const template = await getHwpxTemplate();
     const zip = await window.JSZip.loadAsync(template);
     zip.file("mimetype", "application/hwp+zip", { compression: "STORE" });
     const imagesByCase = [];
     for (const item of state.cases) {
-      imagesByCase.push({
-        map: await composeImage(item, "map"),
-        photo1: await composeImage(item, "photo1"),
-        photo2: await composeImage(item, "photo2"),
-        photo3: await composeImage(item, "photo3"),
-        photo4: await composeImage(item, "photo4"),
-      });
+      const images = {};
+      for (const slot of visibleSlots(item)) images[slot] = await composeImage(item, slot);
+      imagesByCase.push(images);
     }
     const imageRefs = imagesByCase.map((images, caseIndex) => {
-      const refs = {
-        map: { id: `image${caseIndex * 5 + 1}`, width: images.map.width, height: images.map.height },
-        photo1: { id: `image${caseIndex * 5 + 2}`, width: images.photo1.width, height: images.photo1.height },
-        photo2: { id: `image${caseIndex * 5 + 3}`, width: images.photo2.width, height: images.photo2.height },
-        photo3: { id: `image${caseIndex * 5 + 4}`, width: images.photo3.width, height: images.photo3.height },
-        photo4: { id: `image${caseIndex * 5 + 5}`, width: images.photo4.width, height: images.photo4.height },
-      };
+      const refs = {};
+      visibleSlots(state.cases[caseIndex]).forEach((slot, slotIndex) => {
+        refs[slot] = { id: `image${caseIndex}-${slotIndex + 1}`, width: images[slot].width, height: images[slot].height };
+      });
       Object.entries(refs).forEach(([slot, image]) => {
         zip.file(`BinData/${image.id}.png`, images[slot].data);
       });
@@ -932,8 +966,10 @@ async function exportHwpx() {
     const link = document.createElement("a");
     link.href = url;
     link.download = `${buildQuickSaveName(activeCase()) || "민원_현장사진"}.hwpx`;
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(url);
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   } catch (error) {
     console.error(error);
     alert(`HWPX 내보내기에 실패했습니다.\n${error.message || error}`);

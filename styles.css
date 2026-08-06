@@ -610,6 +610,8 @@ select:focus {
   overflow: hidden;
 }
 
+.paper:not(.has-note) .bottom-note { display: none; }
+
 .case-list {
   display: grid;
   gap: 12px;

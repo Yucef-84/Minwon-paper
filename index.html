@@ -19,7 +19,7 @@
             </svg>
           </span>
           <strong>민원지 작성기</strong>
-          <span class="app-version">v1.0.1</span>
+          <span class="app-version">v1.0.2</span>
         </div>
         <nav class="toolstrip" aria-label="편집 도구">
           <button class="tool-button" data-action="fit" title="선택 이미지 자동 맞춤">
@@ -62,7 +62,7 @@
         <div class="top-actions">
           <button class="secondary-button" id="duplicateCase">복제</button>
           <button class="secondary-button" id="addCase">새 건 추가</button>
-          <button class="secondary-button" id="quickSaveButton">PDF 내보내기</button>
+          <button class="secondary-button" id="quickSaveButton">인쇄 / PDF 저장</button>
           <button class="export-button" id="hwpxSaveButton">HWPX 내보내기</button>
         </div>
       </header>
@@ -207,7 +207,7 @@
     </div>
 
     <div id="printRoot" aria-hidden="true"></div>
-    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="vendor/jszip.min.js"></script>
     <script src="hwpx-template-data.js"></script>
     <script src="app.js"></script>
   </body>
