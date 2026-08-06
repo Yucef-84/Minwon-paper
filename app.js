@@ -1,4 +1,5 @@
 const today = new Date().toISOString().slice(0, 10);
+const photoSlots = ["photo1", "photo2", "photo3", "photo4"];
 
 const defaultCase = () => ({
   id: crypto.randomUUID(),
@@ -13,16 +14,22 @@ const defaultCase = () => ({
     map: null,
     photo1: null,
     photo2: null,
+    photo3: null,
+    photo4: null,
   },
   transforms: {
     map: imageDefaults(),
     photo1: imageDefaults(),
     photo2: imageDefaults(),
+    photo3: imageDefaults(),
+    photo4: imageDefaults(),
   },
   shapes: {
     map: [],
     photo1: [],
     photo2: [],
+    photo3: [],
+    photo4: [],
   },
 });
 
@@ -209,7 +216,7 @@ function renderPaper(root, item) {
   $('[data-field="memo"]', root).textContent = item.memo;
   $("#memoBox", root).textContent = item.memo || item.request || "";
 
-  ["map", "photo1", "photo2"].forEach((slot) => renderImageSlot(root, item, slot));
+  ["map", ...photoSlots].forEach((slot) => renderImageSlot(root, item, slot));
 }
 
 function renderImageSlot(root, item, slot) {
@@ -259,10 +266,12 @@ function renderImageSlot(root, item, slot) {
 }
 
 function renderUploadVisibility(item) {
-  const photo2Dropzone = $("#photo2Dropzone");
-  if (photo2Dropzone) {
-    photo2Dropzone.hidden = item.layout !== "double";
-  }
+  const visibleCounts = { single: 1, double: 2, triple: 3, quadruple: 4 };
+  const visibleCount = visibleCounts[item.layout] || 1;
+  photoSlots.forEach((slot, index) => {
+    const dropzone = $(`#${slot}Dropzone`);
+    if (dropzone) dropzone.hidden = index >= visibleCount;
+  });
 }
 
 function formatLocation(item) {
@@ -271,7 +280,7 @@ function formatLocation(item) {
 
 function renderSelection() {
   $$(".image-frame").forEach((frame) => frame.classList.toggle("selected", frame.dataset.slot === state.selectedSlot));
-  const labels = { map: "지도", photo1: "현장사진 1", photo2: "현장사진 2" };
+  const labels = { map: "지도", photo1: "현장사진 1", photo2: "현장사진 2", photo3: "현장사진 3", photo4: "현장사진 4" };
   $("#selectedSlotLabel").textContent = `선택: ${labels[state.selectedSlot]}`;
 }
 
@@ -353,7 +362,7 @@ function addShape(slot, type) {
 }
 
 function addTextShape(slot) {
-  const text = prompt("표시할 문구를 입력하세요.", "파손 발생");
+  const text = prompt("표시할 문구를 입력하세요.", "보수 요청");
   if (!text) return;
   const item = activeCase();
   item.shapes[slot].push({ type: "label", x: 50, y: 50, fontSize: 15, text });
@@ -574,13 +583,13 @@ function unqualifiedHwpxAttributes(xml) {
   return xml.replace(/(\s)(?:hp|hc|hh):([A-Za-z][\w-]*)(=)/g, "$1$2$3");
 }
 
-function hwpxCell(content, widthMm, heightMm, colSpan = 1, paraPr = 20, charPr = 0, borderFill = 3) {
+function hwpxCell(content, widthMm, heightMm, colSpan = 1, paraPr = 20, charPr = 0, borderFill = 3, rowSpan = 1) {
   const body = typeof content === "string"
     ? (content.trimStart().startsWith("<hp:run")
       ? `<hp:p id="2147483648" hp:paraPrIDRef="${paraPr}" hp:styleIDRef="0" hp:pageBreak="0" hp:columnBreak="0" hp:merged="0">${content}<hp:linesegarray><hp:lineseg hp:textpos="0" hp:vertpos="0" hp:vertsize="1000" hp:textheight="1000" hp:baseline="850" hp:spacing="600" hp:horzpos="0" hp:horzsize="42520" hp:flags="393216"/></hp:linesegarray></hp:p>`
       : hwpxParagraph(content, charPr, paraPr))
     : hwpxParagraph(content, charPr, paraPr);
-  return `<hp:tc name="" header="0" hasMargin="1" protect="0" editable="0" dirty="0" borderFillIDRef="${borderFill}"><hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">${body}</hp:subList><hp:cellAddr colAddr="__COL__" rowAddr="__ROW__"/><hp:cellSpan colSpan="${colSpan}" rowSpan="1"/><hp:cellSz width="${hwpxUnits(widthMm)}" height="${hwpxUnits(heightMm)}"/><hp:cellMargin left="141" right="141" top="70" bottom="70"/></hp:tc>`;
+  return `<hp:tc name="" header="0" hasMargin="1" protect="0" editable="0" dirty="0" borderFillIDRef="${borderFill}"><hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">${body}</hp:subList><hp:cellAddr colAddr="__COL__" rowAddr="__ROW__"/><hp:cellSpan colSpan="${colSpan}" rowSpan="${rowSpan}"/><hp:cellSz width="${hwpxUnits(widthMm)}" height="${hwpxUnits(heightMm)}"/><hp:cellMargin left="141" right="141" top="70" bottom="70"/></hp:tc>`;
 }
 
 function hwpxRow(cells, rowIndex) {
@@ -623,6 +632,7 @@ function buildCaseTable(item, images) {
   const contentWidth = 184;
   const halfWidth = contentWidth / 2;
   const imageHeight = 101;
+  const halfImageHeight = imageHeight / 2;
   const metaHeight = 13;
   const titleHeight = 12;
   const mapHeight = 103;
@@ -636,8 +646,8 @@ function buildCaseTable(item, images) {
   const textCell = (label, value, width, height, charPr = 0, paraPr = 20, colSpan = 1, borderFill = 3) =>
     hwpxCell(`${textXml(label)}${textXml(value)}`, width, height, colSpan, paraPr, charPr, borderFill);
   let pictureIndex = 0;
-  const pictureCell = (slot, width, height, colSpan = 1) =>
-    hwpxCell(hwpxPicture(images[slot], width, height, pictureIndex++), width, height, colSpan, 20, 0, 3);
+  const pictureCell = (slot, width, height, colSpan = 1, rowSpan = 1) =>
+    hwpxCell(hwpxPicture(images[slot], width, height, pictureIndex++), width, height, colSpan, 20, 0, 3, rowSpan);
 
   const rows = [
     row([
@@ -650,7 +660,22 @@ function buildCaseTable(item, images) {
     row([textCell("주 소 : ", formatLocation(item), contentWidth, locationHeight, 9, 20, 6)]),
   ];
 
-  if (item.layout === "double") {
+  if (item.layout === "quadruple") {
+    rows.push(row([
+      pictureCell("photo1", halfWidth, halfImageHeight, 3),
+      pictureCell("photo2", halfWidth, halfImageHeight, 3),
+    ]));
+    rows.push(row([
+      pictureCell("photo3", halfWidth, halfImageHeight, 3),
+      pictureCell("photo4", halfWidth, halfImageHeight, 3),
+    ]));
+  } else if (item.layout === "triple") {
+    rows.push(row([
+      pictureCell("photo1", halfWidth, halfImageHeight, 3),
+      pictureCell("photo2", halfWidth, imageHeight, 3, 2),
+    ]));
+    rows.push(row([pictureCell("photo3", halfWidth, halfImageHeight, 3)]));
+  } else if (item.layout === "double") {
     rows.push(row([
       // Six grid columns let the 48:92:44 metadata row use 2:3:1 spans and
       // let the two photo cells each occupy an equal 3-column half.
@@ -750,8 +775,8 @@ function frameSize(slot, item) {
   const width = mapRect?.width || 680;
   const pxPerMm = (mapRect?.height || 390) / 103;
   return {
-    width: item.layout === "double" ? width / 2 : width,
-    height: 101 * pxPerMm,
+    width: item.layout === "single" ? width : width / 2,
+    height: (item.layout === "triple" && slot === "photo2" ? 101 : ["triple", "quadruple"].includes(item.layout) ? 50.5 : 101) * pxPerMm,
   };
 }
 
@@ -803,12 +828,24 @@ async function composeImage(item, slot) {
       ctx.ellipse(0, 0, (shape.w || 64) / 2, (shape.h || 64) / 2, 0, 0, Math.PI * 2);
       ctx.stroke();
     } else if (shape.type === "label") {
-      ctx.fillStyle = "#111";
-      ctx.font = `700 ${shape.fontSize || 15}px sans-serif`;
+      const fontSize = shape.fontSize || 15;
+      const lines = String(shape.text || "").split(/\r?\n/);
+      const lineHeight = fontSize * 1.25;
+      const horizontalPadding = 8;
+      const verticalPadding = 4;
+      ctx.font = `700 ${fontSize}px sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      String(shape.text || "").split(/\r?\n/).forEach((line, index, lines) => {
-        ctx.fillText(line, 0, (index - (lines.length - 1) / 2) * ((shape.fontSize || 15) * 1.25));
+      const labelWidth = Math.max(...lines.map((line) => ctx.measureText(line).width)) + horizontalPadding * 2;
+      const labelHeight = lineHeight * lines.length + verticalPadding * 2;
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(-labelWidth / 2, -labelHeight / 2, labelWidth, labelHeight);
+      ctx.strokeStyle = "#0b68d8";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-labelWidth / 2, -labelHeight / 2, labelWidth, labelHeight);
+      ctx.fillStyle = "#111";
+      lines.forEach((line, index) => {
+        ctx.fillText(line, 0, (index - (lines.length - 1) / 2) * lineHeight);
       });
     }
     ctx.restore();
@@ -855,17 +892,21 @@ async function exportHwpx() {
         map: await composeImage(item, "map"),
         photo1: await composeImage(item, "photo1"),
         photo2: await composeImage(item, "photo2"),
+        photo3: await composeImage(item, "photo3"),
+        photo4: await composeImage(item, "photo4"),
       });
     }
     const imageRefs = imagesByCase.map((images, caseIndex) => {
       const refs = {
-        map: { id: `image${caseIndex * 3 + 1}`, width: images.map.width, height: images.map.height },
-        photo1: { id: `image${caseIndex * 3 + 2}`, width: images.photo1.width, height: images.photo1.height },
-        photo2: { id: `image${caseIndex * 3 + 3}`, width: images.photo2.width, height: images.photo2.height },
+        map: { id: `image${caseIndex * 5 + 1}`, width: images.map.width, height: images.map.height },
+        photo1: { id: `image${caseIndex * 5 + 2}`, width: images.photo1.width, height: images.photo1.height },
+        photo2: { id: `image${caseIndex * 5 + 3}`, width: images.photo2.width, height: images.photo2.height },
+        photo3: { id: `image${caseIndex * 5 + 4}`, width: images.photo3.width, height: images.photo3.height },
+        photo4: { id: `image${caseIndex * 5 + 5}`, width: images.photo4.width, height: images.photo4.height },
       };
-      zip.file(`BinData/${refs.map.id}.png`, images.map.data);
-      zip.file(`BinData/${refs.photo1.id}.png`, images.photo1.data);
-      zip.file(`BinData/${refs.photo2.id}.png`, images.photo2.data);
+      Object.entries(refs).forEach(([slot, image]) => {
+        zip.file(`BinData/${image.id}.png`, images[slot].data);
+      });
       return refs;
     });
 

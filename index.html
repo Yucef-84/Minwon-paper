@@ -19,7 +19,7 @@
             </svg>
           </span>
           <strong>민원지 작성기</strong>
-          <span class="app-version">v1.0.0</span>
+          <span class="app-version">v1.0.1</span>
         </div>
         <nav class="toolstrip" aria-label="편집 도구">
           <button class="tool-button" data-action="fit" title="선택 이미지 자동 맞춤">
@@ -98,6 +98,8 @@
             <select id="layoutInput">
               <option value="single">현장사진 1장</option>
               <option value="double">현장사진 2장</option>
+              <option value="triple">현장사진 3장</option>
+              <option value="quadruple">현장사진 4장</option>
             </select>
           </label>
         </section>
@@ -121,7 +123,17 @@
           <div class="dropzone" data-slot="photo2" id="photo2Dropzone">
             <input id="photo2Upload" type="file" accept="image/*" />
             <strong>현장사진 2 업로드</strong>
-            <span>2장 배치에서 사용</span>
+            <span>2장 이상 배치에서 사용</span>
+          </div>
+          <div class="dropzone" data-slot="photo3" id="photo3Dropzone">
+            <input id="photo3Upload" type="file" accept="image/*" />
+            <strong>현장사진 3 업로드</strong>
+            <span>3장 이상 배치에서 사용</span>
+          </div>
+          <div class="dropzone" data-slot="photo4" id="photo4Dropzone">
+            <input id="photo4Upload" type="file" accept="image/*" />
+            <strong>현장사진 4 업로드</strong>
+            <span>4장 배치에서 사용</span>
           </div>
         </section>
 
@@ -168,6 +180,16 @@
               <div class="image-frame photo-frame" data-slot="photo2" tabindex="0">
                 <img alt="현장사진 2" />
                 <div class="placeholder">현장사진 2</div>
+                <div class="shape-layer"></div>
+              </div>
+              <div class="image-frame photo-frame" data-slot="photo3" tabindex="0">
+                <img alt="현장사진 3" />
+                <div class="placeholder">현장사진 3</div>
+                <div class="shape-layer"></div>
+              </div>
+              <div class="image-frame photo-frame" data-slot="photo4" tabindex="0">
+                <img alt="현장사진 4" />
+                <div class="placeholder">현장사진 4</div>
                 <div class="shape-layer"></div>
               </div>
               <div class="memo-box" id="memoBox"></div>
