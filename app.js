@@ -10,6 +10,10 @@ const makeCaseId = () => crypto.randomUUID?.() || `minwon-${Date.now().toString(
 const localDate = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const today = localDate();
 const photoSlots = ["photo1", "photo2", "photo3", "photo4"];
+const LABEL_PADDING_X = 16;
+const LABEL_PADDING_Y = 8;
+const LABEL_SAFE_MARGIN = 4;
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 const defaultCase = () => ({
   id: makeCaseId(),
@@ -48,6 +52,58 @@ function imageDefaults() {
   return { scale: 1, x: 0, y: 0, rotation: 0, naturalWidth: 0, naturalHeight: 0 };
 }
 
+function labelFontMetrics(shape, measureContext = null) {
+  const fontSize = Math.max(8, Math.min(72, Number(shape.fontSize) || 15));
+  const text = String(shape.text || "");
+  const lines = text.split(/\r?\n/);
+  const lineHeight = fontSize * 1.25;
+  const context = measureContext || document.createElement("canvas").getContext("2d");
+  context.font = `700 ${fontSize}px sans-serif`;
+  return {
+    text,
+    lines,
+    fontSize,
+    lineHeight,
+    context,
+  };
+}
+
+function labelAvailableWidth(width, shape) {
+  const centerX = (Math.max(0, Math.min(100, Number(shape.x) || 0)) / 100) * width;
+  const leftSpace = centerX;
+  const rightSpace = Math.max(0, width - centerX);
+  const available = Math.min(leftSpace, rightSpace) * 2 - LABEL_SAFE_MARGIN * 2;
+  return Math.max(LABEL_PADDING_X + 2, Math.min(width, available));
+}
+
+function splitLabelGraphemes(value) {
+  const segmenter = globalThis.Intl?.Segmenter ? new Intl.Segmenter("ko", { granularity: "grapheme" }) : null;
+  return segmenter ? Array.from(segmenter.segment(value), (part) => part.segment) : Array.from(value);
+}
+
+function wrapLabelLines(context, text, maxTextWidth) {
+  const lines = [];
+  String(text || "").split(/\r?\n/).forEach((sourceLine) => {
+    const graphemes = splitLabelGraphemes(sourceLine);
+    if (!graphemes.length) {
+      lines.push("");
+      return;
+    }
+    let current = "";
+    graphemes.forEach((grapheme) => {
+      const candidate = current + grapheme;
+      if (current && context.measureText(candidate).width > maxTextWidth) {
+        lines.push(current);
+        current = grapheme;
+      } else {
+        current = candidate;
+      }
+    });
+    if (current) lines.push(current);
+  });
+  return lines.length ? lines : [""];
+}
+
 const state = {
   cases: [defaultCase()],
   activeIndex: 0,
@@ -55,6 +111,8 @@ const state = {
   selectedShape: null,
   drag: null,
   shapeDrag: null,
+  activeTool: null,
+  lineDraft: null,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -96,6 +154,7 @@ function bindInputs() {
       item[key] = input.type === "checkbox" ? input.checked : input.value;
       const layoutChanged = key === "layout" && previousLayout !== item.layout;
       if (layoutChanged) {
+        setActiveTool(null);
         if (!(LAYOUT_DEFINITIONS[item.layout]?.slots || []).includes(state.selectedSlot) && state.selectedSlot !== "map") {
           state.selectedSlot = "photo1";
           state.selectedShape = null;
@@ -147,12 +206,14 @@ function bindInputs() {
   });
 
   $("#addCase").addEventListener("click", () => {
+    setActiveTool(null);
     state.cases.push(defaultCase());
     state.activeIndex = state.cases.length - 1;
     render();
   });
 
   $("#duplicateCase").addEventListener("click", () => {
+    setActiveTool(null);
     const copy = JSON.parse(JSON.stringify(activeCase()));
     copy.id = makeCaseId();
     state.cases.splice(state.activeIndex + 1, 0, copy);
@@ -165,8 +226,14 @@ function bindInputs() {
   $("#copyAddress").addEventListener("click", () => navigator.clipboard?.writeText(activeCase().address || ""));
   document.addEventListener("paste", pasteImageIntoSelectedSlot);
   document.addEventListener("keydown", deleteSelectedImageWithKey);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") cancelLineDraw();
+  });
   document.addEventListener("pointermove", moveShapeDrag);
+  document.addEventListener("pointermove", moveLineDraw);
   document.addEventListener("pointerup", endShapeDrag);
+  document.addEventListener("pointerup", endLineDraw);
+  document.addEventListener("pointercancel", cancelLineDraw);
 }
 
 function limitLines(value, maxLines) {
@@ -282,8 +349,86 @@ function renderImageSlot(root, item, slot) {
   layer.innerHTML = "";
   const showEditing = root.id === "paper";
   item.shapes[slot].forEach((shape, index) => {
-    const el = document.createElement("div");
     const selected = showEditing && state.selectedShape?.slot === slot && state.selectedShape.index === index;
+    if (shape.type === "line") {
+      const svg = document.createElementNS(SVG_NS, "svg");
+      svg.classList.add("shape", "line", ...(selected ? ["selected"] : []));
+      svg.dataset.slot = slot;
+      svg.dataset.index = index;
+      svg.setAttribute("viewBox", "0 0 100 100");
+      svg.setAttribute("preserveAspectRatio", "none");
+      svg.setAttribute("aria-label", "선");
+      svg.style.left = "0";
+      svg.style.top = "0";
+      svg.style.width = "100%";
+      svg.style.height = "100%";
+      svg.style.transform = "none";
+
+      const visibleLine = document.createElementNS(SVG_NS, "line");
+      visibleLine.classList.add("line-visible");
+      visibleLine.setAttribute("x1", shape.x1);
+      visibleLine.setAttribute("y1", shape.y1);
+      visibleLine.setAttribute("x2", shape.x2);
+      visibleLine.setAttribute("y2", shape.y2);
+      visibleLine.setAttribute("stroke", "#db2f24");
+      visibleLine.setAttribute("stroke-width", shape.strokeWidth || 3);
+      visibleLine.setAttribute("stroke-linecap", "round");
+      visibleLine.setAttribute("vector-effect", "non-scaling-stroke");
+      visibleLine.setAttribute("pointer-events", "none");
+      svg.appendChild(visibleLine);
+
+      if (showEditing) {
+        const hitLine = document.createElementNS(SVG_NS, "line");
+        hitLine.classList.add("line-hit");
+        hitLine.setAttribute("x1", shape.x1);
+        hitLine.setAttribute("y1", shape.y1);
+        hitLine.setAttribute("x2", shape.x2);
+        hitLine.setAttribute("y2", shape.y2);
+        hitLine.addEventListener("pointerdown", (event) => startLineMove(event, slot, index));
+        svg.appendChild(hitLine);
+        if (selected) {
+          const frameRect = frame.getBoundingClientRect();
+          const visualRadiusX = (5 / Math.max(1, frameRect.width)) * 100;
+          const visualRadiusY = (5 / Math.max(1, frameRect.height)) * 100;
+          const hitRadiusX = (14 / Math.max(1, frameRect.width)) * 100;
+          const hitRadiusY = (14 / Math.max(1, frameRect.height)) * 100;
+          [
+            [shape.x1, shape.y1],
+            [shape.x2, shape.y2],
+          ].forEach(([cx, cy]) => {
+            const hit = document.createElementNS(SVG_NS, "ellipse");
+            hit.classList.add("line-handle-hit");
+            hit.setAttribute("cx", cx);
+            hit.setAttribute("cy", cy);
+            hit.setAttribute("rx", hitRadiusX);
+            hit.setAttribute("ry", hitRadiusY);
+            hit.addEventListener("pointerdown", (event) => startNearestLineEndpoint(event, slot, index));
+            svg.appendChild(hit);
+
+            const outline = document.createElementNS(SVG_NS, "ellipse");
+            outline.classList.add("line-handle-outline");
+            outline.setAttribute("cx", cx);
+            outline.setAttribute("cy", cy);
+            outline.setAttribute("rx", visualRadiusX);
+            outline.setAttribute("ry", visualRadiusY);
+            outline.setAttribute("pointer-events", "none");
+            svg.appendChild(outline);
+
+            const handle = document.createElementNS(SVG_NS, "ellipse");
+            handle.classList.add("line-handle");
+            handle.setAttribute("cx", cx);
+            handle.setAttribute("cy", cy);
+            handle.setAttribute("rx", visualRadiusX);
+            handle.setAttribute("ry", visualRadiusY);
+            handle.setAttribute("pointer-events", "none");
+            svg.appendChild(handle);
+          });
+        }
+      }
+      layer.appendChild(svg);
+      return;
+    }
+    const el = document.createElement("div");
     el.className = `shape ${shape.type}${selected ? " selected" : ""}`;
     el.dataset.slot = slot;
     el.dataset.index = index;
@@ -292,7 +437,11 @@ function renderImageSlot(root, item, slot) {
     if (shape.w) el.style.width = `${shape.w}px`;
     if (shape.h) el.style.height = `${shape.h}px`;
     if (shape.fontSize) el.style.fontSize = `${shape.fontSize}px`;
-    if (shape.type === "label") el.textContent = shape.text;
+    if (shape.type === "label") {
+      el.style.width = "max-content";
+      el.style.maxWidth = `${labelAvailableWidth(frame.clientWidth || frame.getBoundingClientRect().width || 1, shape)}px`;
+      el.textContent = shape.text;
+    }
     if (showEditing) {
       el.addEventListener("pointerdown", (event) => startShapeMove(event, slot, index));
       if (selected) {
@@ -339,12 +488,14 @@ function renderCaseList() {
       </div>
     `;
     card.addEventListener("click", () => {
+      setActiveTool(null);
       state.activeIndex = index;
       render();
     });
     $(".case-delete", card).addEventListener("click", (event) => {
       event.stopPropagation();
       if (state.cases.length === 1) return;
+      setActiveTool(null);
       state.cases.splice(index, 1);
       state.activeIndex = Math.max(0, Math.min(state.activeIndex, state.cases.length - 1));
       render();
@@ -355,6 +506,12 @@ function renderCaseList() {
 
 function handleTool(action) {
   const slot = state.selectedSlot;
+  if (action === "line") {
+    setActiveTool(state.activeTool === "line" ? null : "line");
+    render();
+    return;
+  }
+  setActiveTool(null);
   if (action === "fit") autoFit(slot);
   if (action === "zoom-in") adjustScale(slot, 1.08);
   if (action === "zoom-out") adjustScale(slot, 0.92);
@@ -364,6 +521,12 @@ function handleTool(action) {
   if (action === "delete-shape") deleteSelectedOrLastShape(slot);
   if (action === "delete-image") clearImage(slot);
   render();
+}
+
+function setActiveTool(action) {
+  if (action !== "line" && state.lineDraft) cancelLineDraw();
+  state.activeTool = action === "line" ? "line" : null;
+  $$(".tool-button").forEach((button) => button.classList.toggle("active", button.dataset.action === state.activeTool));
 }
 
 function autoFit(itemOrSlot, maybeSlot) {
@@ -415,8 +578,139 @@ function deleteSelectedOrLastShape(slot) {
   item.shapes[slot].pop();
 }
 
+function pointerToPercent(frame, event) {
+  const rect = frame.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)),
+    y: Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100)),
+  };
+}
+
+function lineLengthPixels(line, frame) {
+  const rect = frame.getBoundingClientRect();
+  return Math.hypot(((line.x2 - line.x1) / 100) * rect.width, ((line.y2 - line.y1) / 100) * rect.height);
+}
+
+function startLineDraw(event) {
+  const frame = event.currentTarget;
+  const slot = frame.dataset.slot;
+  const item = activeCase();
+  const point = pointerToPercent(frame, event);
+  event.preventDefault();
+  event.stopPropagation();
+  state.selectedSlot = slot;
+  const line = { type: "line", x1: point.x, y1: point.y, x2: point.x, y2: point.y, strokeWidth: 3 };
+  item.shapes[slot].push(line);
+  const index = item.shapes[slot].length - 1;
+  state.selectedShape = { slot, index };
+  state.lineDraft = { slot, index, frame, pointerId: event.pointerId };
+  frame.setPointerCapture?.(event.pointerId);
+  renderImageSlot($("#paper"), item, slot);
+}
+
+function moveLineDraw(event) {
+  const draft = state.lineDraft;
+  if (!draft || (draft.pointerId != null && draft.pointerId !== event.pointerId)) return;
+  const line = activeCase().shapes[draft.slot][draft.index];
+  if (!line) return;
+  const point = pointerToPercent(draft.frame, event);
+  line.x2 = point.x;
+  line.y2 = point.y;
+  renderImageSlot($("#paper"), activeCase(), draft.slot);
+}
+
+function endLineDraw(event) {
+  const draft = state.lineDraft;
+  if (!draft || (draft.pointerId != null && draft.pointerId !== event.pointerId)) return;
+  const item = activeCase();
+  const line = item.shapes[draft.slot][draft.index];
+  state.lineDraft = null;
+  if (!line || lineLengthPixels(line, draft.frame) < 8) {
+    if (line) item.shapes[draft.slot].splice(draft.index, 1);
+    state.selectedShape = null;
+  }
+  render();
+}
+
+function cancelLineDraw() {
+  const draft = state.lineDraft;
+  if (!draft) return;
+  const item = activeCase();
+  item.shapes[draft.slot].splice(draft.index, 1);
+  state.lineDraft = null;
+  state.selectedShape = null;
+  render();
+}
+
+function startLineMove(event, slot, index) {
+  event.preventDefault();
+  event.stopPropagation();
+  const frame = event.currentTarget.closest(".image-frame");
+  const line = activeCase().shapes[slot][index];
+  state.selectedSlot = slot;
+  state.selectedShape = { slot, index };
+  state.shapeDrag = {
+    mode: "line-move",
+    slot,
+    index,
+    frame,
+    startX: event.clientX,
+    startY: event.clientY,
+    origin: { x1: line.x1, y1: line.y1, x2: line.x2, y2: line.y2 },
+  };
+  event.currentTarget.setPointerCapture?.(event.pointerId);
+  render();
+}
+
+function startLineEndpoint(event, slot, index, endpoint) {
+  event.preventDefault();
+  event.stopPropagation();
+  const frame = event.currentTarget.closest(".image-frame");
+  const line = activeCase().shapes[slot][index];
+  state.selectedSlot = slot;
+  state.selectedShape = { slot, index };
+  state.shapeDrag = { mode: `line-${endpoint}`, slot, index, frame };
+  event.currentTarget.setPointerCapture?.(event.pointerId);
+  render();
+}
+
+function startNearestLineEndpoint(event, slot, index) {
+  const frame = event.currentTarget.closest(".image-frame");
+  const line = activeCase().shapes[slot][index];
+  const point = pointerToPercent(frame, event);
+  const startDistance = Math.hypot(point.x - line.x1, point.y - line.y1);
+  const endDistance = Math.hypot(point.x - line.x2, point.y - line.y2);
+  startLineEndpoint(event, slot, index, startDistance <= endDistance ? "start" : "end");
+}
+
+function updateLineEndpoint(line, endpoint, point, frame) {
+  const rect = frame.getBoundingClientRect();
+  const other = endpoint === "start" ? { x: line.x2, y: line.y2 } : { x: line.x1, y: line.y1 };
+  let x = point.x;
+  let y = point.y;
+  const dx = ((x - other.x) / 100) * rect.width;
+  const dy = ((y - other.y) / 100) * rect.height;
+  const length = Math.hypot(dx, dy);
+  if (length < 8) {
+    const angle = length ? Math.atan2(dy, dx) : endpoint === "start" ? Math.PI : 0;
+    x = other.x + (Math.cos(angle) * 8 * 100) / rect.width;
+    y = other.y + (Math.sin(angle) * 8 * 100) / rect.height;
+  }
+  if (endpoint === "start") {
+    line.x1 = Math.max(0, Math.min(100, x));
+    line.y1 = Math.max(0, Math.min(100, y));
+  } else {
+    line.x2 = Math.max(0, Math.min(100, x));
+    line.y2 = Math.max(0, Math.min(100, y));
+  }
+}
+
 function startDrag(event) {
   if (event.target.closest(".shape")) return;
+  if (state.activeTool === "line") {
+    startLineDraw(event);
+    return;
+  }
   const frame = event.currentTarget;
   const slot = frame.dataset.slot;
   selectSlot(slot);
@@ -484,6 +778,28 @@ function moveShapeDrag(event) {
   const shape = item.shapes[drag.slot][drag.index];
   if (!shape) return;
 
+  if (drag.mode === "line-move" || drag.mode === "line-start" || drag.mode === "line-end") {
+    const rect = drag.frame.getBoundingClientRect();
+    if (drag.mode === "line-move") {
+      const dx = ((event.clientX - drag.startX) / rect.width) * 100;
+      const dy = ((event.clientY - drag.startY) / rect.height) * 100;
+      const minDx = -Math.min(drag.origin.x1, drag.origin.x2);
+      const maxDx = 100 - Math.max(drag.origin.x1, drag.origin.x2);
+      const minDy = -Math.min(drag.origin.y1, drag.origin.y2);
+      const maxDy = 100 - Math.max(drag.origin.y1, drag.origin.y2);
+      const clampedDx = Math.max(minDx, Math.min(maxDx, dx));
+      const clampedDy = Math.max(minDy, Math.min(maxDy, dy));
+      shape.x1 = drag.origin.x1 + clampedDx;
+      shape.y1 = drag.origin.y1 + clampedDy;
+      shape.x2 = drag.origin.x2 + clampedDx;
+      shape.y2 = drag.origin.y2 + clampedDy;
+    } else {
+      updateLineEndpoint(shape, drag.mode === "line-start" ? "start" : "end", pointerToPercent(drag.frame, event), drag.frame);
+    }
+    renderImageSlot($("#paper"), item, drag.slot);
+    return;
+  }
+
   if (drag.mode === "move") {
     const rect = drag.frame.getBoundingClientRect();
     shape.x = Math.max(0, Math.min(100, drag.originX + ((event.clientX - drag.startX) / rect.width) * 100));
@@ -518,6 +834,7 @@ function endDrag() {
 
 function zoomWithWheel(event) {
   event.preventDefault();
+  if (state.activeTool === "line" || state.lineDraft) return;
   const slot = event.currentTarget.dataset.slot;
   selectSlot(slot);
   adjustScale(slot, event.deltaY < 0 ? 1.05 : 0.95);
@@ -875,8 +1192,8 @@ async function composeImage(item, slot) {
   }
 
   item.shapes[slot].forEach((shape) => {
-    const x = (shape.x / 100) * size.width;
-    const y = (shape.y / 100) * size.height;
+    const x = shape.type === "line" ? ((shape.x1 + shape.x2) / 200) * size.width : (shape.x / 100) * size.width;
+    const y = shape.type === "line" ? ((shape.y1 + shape.y2) / 200) * size.height : (shape.y / 100) * size.height;
     ctx.save();
     ctx.translate(x, y);
     if (shape.type === "circle" || shape.type === "dashed") {
@@ -886,17 +1203,23 @@ async function composeImage(item, slot) {
       ctx.beginPath();
       ctx.ellipse(0, 0, (shape.w || 64) / 2, (shape.h || 64) / 2, 0, 0, Math.PI * 2);
       ctx.stroke();
+    } else if (shape.type === "line") {
+      ctx.strokeStyle = "#db2f24";
+      ctx.lineWidth = shape.strokeWidth || 3;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo((shape.x1 / 100) * size.width - x, (shape.y1 / 100) * size.height - y);
+      ctx.lineTo((shape.x2 / 100) * size.width - x, (shape.y2 / 100) * size.height - y);
+      ctx.stroke();
     } else if (shape.type === "label") {
-      const fontSize = shape.fontSize || 15;
-      const lines = String(shape.text || "").split(/\r?\n/);
-      const lineHeight = fontSize * 1.25;
-      const horizontalPadding = 8;
-      const verticalPadding = 4;
-      ctx.font = `700 ${fontSize}px sans-serif`;
+      const metrics = labelFontMetrics(shape, ctx);
+      const maxWidth = labelAvailableWidth(size.width, shape);
+      const lines = wrapLabelLines(ctx, metrics.text, Math.max(1, maxWidth - LABEL_PADDING_X));
+      const labelWidth = Math.min(maxWidth, Math.max(1, ...lines.map((line) => ctx.measureText(line).width)) + LABEL_PADDING_X);
+      const labelHeight = metrics.lineHeight * lines.length + LABEL_PADDING_Y;
+      const lineHeight = metrics.lineHeight;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      const labelWidth = Math.max(...lines.map((line) => ctx.measureText(line).width)) + horizontalPadding * 2;
-      const labelHeight = lineHeight * lines.length + verticalPadding * 2;
       ctx.fillStyle = "#fff";
       ctx.fillRect(-labelWidth / 2, -labelHeight / 2, labelWidth, labelHeight);
       ctx.strokeStyle = "#0b68d8";

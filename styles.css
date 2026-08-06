@@ -438,6 +438,61 @@ select:focus {
   border-style: dashed;
 }
 
+.line-icon {
+  display: inline-block;
+  width: 18px;
+  height: 2px;
+  background: currentColor;
+  transform: rotate(-35deg);
+  vertical-align: middle;
+}
+
+.shape.line {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.shape.line.selected {
+  outline: none !important;
+}
+
+.line-visible {
+  pointer-events: none;
+}
+
+.line-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 12;
+  vector-effect: non-scaling-stroke;
+  pointer-events: stroke;
+  cursor: move;
+}
+
+.line-handle {
+  fill: transparent;
+  stroke: var(--accent-2);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.line-handle-outline {
+  fill: transparent;
+  stroke: #fff;
+  stroke-width: 4;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.line-handle-hit {
+  fill: transparent;
+  stroke: transparent;
+  pointer-events: all;
+  cursor: crosshair;
+}
+
 .shape.selected {
   outline: 2px solid rgba(11, 104, 216, 0.85);
   outline-offset: 3px;
@@ -458,6 +513,7 @@ select:focus {
 }
 
 .shape.label {
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -472,7 +528,11 @@ select:focus {
   text-align: center;
   transform: translate(-50%, -50%);
   line-height: 1.25;
+  width: max-content;
+  max-width: 100%;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .location-row {
