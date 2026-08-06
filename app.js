@@ -756,6 +756,7 @@ function buildCaseTable(item, images) {
   }
   rows.push(row([textCell("", "현장사진", contentWidth, captionHeight, 9, 20, 6)]));
   if (noteHeight) rows.push(row([textCell("", item.memo, contentWidth, noteHeight, 10, 20, 6, 4)]));
+  hwpxIdCounters.table = nextHwpxId("table");
 
   return `<hp:tbl id="${hwpxIdCounters.table++}" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="0" rowCnt="${rows.length}" colCnt="6" cellSpacing="0" borderFillIDRef="3" noAdjust="0"><hp:sz width="${hwpxUnits(contentWidth)}" widthRelTo="ABSOLUTE" height="${hwpxUnits(tableHeight)}" heightRelTo="ABSOLUTE" protect="0"/><hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="0"/><hp:outMargin left="0" right="0" top="0" bottom="0"/><hp:inMargin left="0" right="0" top="0" bottom="0"/>${rows.join("")}</hp:tbl>`;
 }
@@ -944,6 +945,8 @@ async function exportHwpx() {
   try {
     const exportSnapshot = JSON.parse(JSON.stringify(state.cases));
     if (!exportSnapshot.every(caseIsValid)) throw new Error("내보내기 시작 후 입력이 유효하지 않습니다.");
+    const exportActiveIndex = Math.min(state.activeIndex, exportSnapshot.length - 1);
+    const exportFileName = `${buildQuickSaveName(exportSnapshot[exportActiveIndex] || exportSnapshot[0]) || "민원_현장사진"}.hwpx`;
     const template = await getHwpxTemplate();
     const zip = await window.JSZip.loadAsync(template);
     const sectionXmlEntries = [];
@@ -990,7 +993,7 @@ async function exportHwpx() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${buildQuickSaveName(exportSnapshot[state.activeIndex] || exportSnapshot[0]) || "민원_현장사진"}.hwpx`;
+    link.download = exportFileName;
     document.body.appendChild(link);
     link.click();
     link.remove();
