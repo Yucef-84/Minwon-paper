@@ -12,6 +12,8 @@ const today = localDate();
 const photoSlots = ["photo1", "photo2", "photo3", "photo4"];
 const LABEL_PADDING_X = 16;
 const LABEL_PADDING_Y = 8;
+const LABEL_BORDER_X = 4;
+const LABEL_BORDER_Y = 4;
 const LABEL_SAFE_MARGIN = 4;
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -425,6 +427,7 @@ function renderImageSlot(root, item, slot) {
           });
         }
       }
+      svg.appendChild(visibleLine);
       layer.appendChild(svg);
       return;
     }
@@ -656,6 +659,7 @@ function startLineMove(event, slot, index) {
     frame,
     startX: event.clientX,
     startY: event.clientY,
+    pointerId: event.pointerId,
     origin: { x1: line.x1, y1: line.y1, x2: line.x2, y2: line.y2 },
   };
   event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -669,7 +673,7 @@ function startLineEndpoint(event, slot, index, endpoint) {
   const line = activeCase().shapes[slot][index];
   state.selectedSlot = slot;
   state.selectedShape = { slot, index };
-  state.shapeDrag = { mode: `line-${endpoint}`, slot, index, frame };
+  state.shapeDrag = { mode: `line-${endpoint}`, slot, index, frame, pointerId: event.pointerId };
   event.currentTarget.setPointerCapture?.(event.pointerId);
   render();
 }
@@ -678,23 +682,35 @@ function startNearestLineEndpoint(event, slot, index) {
   const frame = event.currentTarget.closest(".image-frame");
   const line = activeCase().shapes[slot][index];
   const point = pointerToPercent(frame, event);
-  const startDistance = Math.hypot(point.x - line.x1, point.y - line.y1);
-  const endDistance = Math.hypot(point.x - line.x2, point.y - line.y2);
+  const rect = frame.getBoundingClientRect();
+  const startDistance = Math.hypot(((point.x - line.x1) / 100) * rect.width, ((point.y - line.y1) / 100) * rect.height);
+  const endDistance = Math.hypot(((point.x - line.x2) / 100) * rect.width, ((point.y - line.y2) / 100) * rect.height);
   startLineEndpoint(event, slot, index, startDistance <= endDistance ? "start" : "end");
 }
 
 function updateLineEndpoint(line, endpoint, point, frame) {
   const rect = frame.getBoundingClientRect();
   const other = endpoint === "start" ? { x: line.x2, y: line.y2 } : { x: line.x1, y: line.y1 };
-  let x = point.x;
-  let y = point.y;
-  const dx = ((x - other.x) / 100) * rect.width;
-  const dy = ((y - other.y) / 100) * rect.height;
-  const length = Math.hypot(dx, dy);
-  if (length < 8) {
-    const angle = length ? Math.atan2(dy, dx) : endpoint === "start" ? Math.PI : 0;
-    x = other.x + (Math.cos(angle) * 8 * 100) / rect.width;
-    y = other.y + (Math.sin(angle) * 8 * 100) / rect.height;
+  let x = Math.max(0, Math.min(100, point.x));
+  let y = Math.max(0, Math.min(100, point.y));
+  const distance = () => Math.hypot(((x - other.x) / 100) * rect.width, ((y - other.y) / 100) * rect.height);
+  if (distance() < 8) {
+    const requestedAngle = Math.atan2(((y - other.y) / 100) * rect.height, ((x - other.x) / 100) * rect.width);
+    const angles = Array.from({ length: 32 }, (_, index) => requestedAngle + (index * Math.PI * 2) / 32);
+    const candidates = angles
+      .map((angle) => ({
+        x: other.x + (Math.cos(angle) * 8 * 100) / rect.width,
+        y: other.y + (Math.sin(angle) * 8 * 100) / rect.height,
+      }))
+      .filter((candidate) => candidate.x >= 0 && candidate.x <= 100 && candidate.y >= 0 && candidate.y <= 100)
+      .sort((a, b) => {
+        const distanceToPointer = (candidate) => Math.hypot(((candidate.x - point.x) / 100) * rect.width, ((candidate.y - point.y) / 100) * rect.height);
+        return distanceToPointer(a) - distanceToPointer(b);
+      });
+    if (candidates[0]) {
+      x = candidates[0].x;
+      y = candidates[0].y;
+    }
   }
   if (endpoint === "start") {
     line.x1 = Math.max(0, Math.min(100, x));
@@ -744,6 +760,7 @@ function startShapeMove(event, slot, index) {
     frame,
     startX: event.clientX,
     startY: event.clientY,
+    pointerId: event.pointerId,
     originX: shape.x,
     originY: shape.y,
   };
@@ -765,6 +782,7 @@ function startShapeResize(event, slot, index) {
     frame,
     startX: event.clientX,
     startY: event.clientY,
+    pointerId: event.pointerId,
     originW: shape.w || 70,
     originH: shape.h || 48,
     originFontSize: shape.fontSize || 15,
@@ -774,6 +792,7 @@ function startShapeResize(event, slot, index) {
 function moveShapeDrag(event) {
   if (!state.shapeDrag) return;
   const drag = state.shapeDrag;
+  if (drag.pointerId != null && drag.pointerId !== event.pointerId) return;
   const item = activeCase();
   const shape = item.shapes[drag.slot][drag.index];
   if (!shape) return;
@@ -816,7 +835,8 @@ function moveShapeDrag(event) {
   renderImageSlot($("#paper"), item, drag.slot);
 }
 
-function endShapeDrag() {
+function endShapeDrag(event) {
+  if (state.shapeDrag?.pointerId != null && state.shapeDrag.pointerId !== event.pointerId) return;
   state.shapeDrag = null;
 }
 
@@ -1214,9 +1234,9 @@ async function composeImage(item, slot) {
     } else if (shape.type === "label") {
       const metrics = labelFontMetrics(shape, ctx);
       const maxWidth = labelAvailableWidth(size.width, shape);
-      const lines = wrapLabelLines(ctx, metrics.text, Math.max(1, maxWidth - LABEL_PADDING_X));
-      const labelWidth = Math.min(maxWidth, Math.max(1, ...lines.map((line) => ctx.measureText(line).width)) + LABEL_PADDING_X);
-      const labelHeight = metrics.lineHeight * lines.length + LABEL_PADDING_Y;
+      const lines = wrapLabelLines(ctx, metrics.text, Math.max(1, maxWidth - LABEL_PADDING_X - LABEL_BORDER_X));
+      const labelWidth = Math.min(maxWidth, Math.max(1, ...lines.map((line) => ctx.measureText(line).width)) + LABEL_PADDING_X + LABEL_BORDER_X);
+      const labelHeight = metrics.lineHeight * lines.length + LABEL_PADDING_Y + LABEL_BORDER_Y;
       const lineHeight = metrics.lineHeight;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";

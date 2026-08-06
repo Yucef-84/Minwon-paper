@@ -416,6 +416,7 @@ select:focus {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  touch-action: none;
 }
 
 .shape {
@@ -491,6 +492,13 @@ select:focus {
   stroke: transparent;
   pointer-events: all;
   cursor: crosshair;
+}
+
+.image-frame,
+.shape.line,
+.line-hit,
+.line-handle-hit {
+  touch-action: none;
 }
 
 .shape.selected {
@@ -764,6 +772,13 @@ select:focus {
   }
 
   #printRoot .resize-handle {
+    display: none;
+  }
+
+  #printRoot .line-hit,
+  #printRoot .line-handle,
+  #printRoot .line-handle-outline,
+  #printRoot .line-handle-hit {
     display: none;
   }
 
