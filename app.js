@@ -102,7 +102,6 @@ function bindInputs() {
           state.drag = null;
           state.shapeDrag = null;
         }
-        (LAYOUT_DEFINITIONS[item.layout]?.slots || []).forEach((slot) => autoFit(item, slot));
       }
       if (key === "author") {
         localStorage.setItem("minwonAuthor", input.value.trim());
@@ -598,7 +597,27 @@ function quickSave() {
 }
 
 let hwpxTemplatePromise = null;
-let hwpxIdCounters = { table: 1000000001, object: 1147780917, instance: 74039094 };
+let hwpxIdCounters = { table: 1, object: 1, instance: 1 };
+
+function scanHwpxIdMaxima(xmlEntries) {
+  const maxima = { table: 0, object: 0, instance: 0 };
+  const scan = (pattern, key, xml) => {
+    for (const match of xml.matchAll(pattern)) maxima[key] = Math.max(maxima[key], Number(match[1]));
+  };
+  xmlEntries.forEach((xml) => {
+    scan(/<hp:tbl\b[^>]*\bid="(\d+)"/g, "table", xml);
+    scan(/<hp:pic\b[^>]*\bid="(\d+)"/g, "object", xml);
+    scan(/<hp:pic\b[^>]*\binstid="(\d+)"/g, "instance", xml);
+  });
+  return { table: maxima.table + 1, object: maxima.object + 1, instance: maxima.instance + 1 };
+}
+
+function nextHwpxId(kind) {
+  const value = hwpxIdCounters[kind];
+  if (!Number.isInteger(value) || value < 1 || value > 2147483647) throw new Error(`HWPX ${kind} ID 범위를 초과했습니다.`);
+  hwpxIdCounters[kind] += 1;
+  return value;
+}
 
 function xmlEscape(value) {
   return String(value ?? "")
@@ -666,8 +685,8 @@ function hwpxPicture(image, widthMm, heightMm, pictureIndex) {
   const displayHeightMm = frameRatio > cellRatio ? widthMm / frameRatio : heightMm;
   const width = hwpxUnits(displayWidthMm);
   const height = hwpxUnits(displayHeightMm);
-  const objectId = hwpxIdCounters.object++;
-  const instanceId = hwpxIdCounters.instance++;
+  const objectId = nextHwpxId("object");
+  const instanceId = nextHwpxId("instance");
   return `<hp:run hp:charPrIDRef="0"><hp:pic id="${objectId}" zOrder="${pictureIndex}" numberingType="PICTURE" textWrap="SQUARE" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0" instid="${instanceId}" reverse="0"><hp:offset x="0" y="0"/><hp:orgSz width="${width}" height="${height}"/><hp:curSz width="${width}" height="${height}"/><hp:flip horizontal="0" vertical="0"/><hp:rotationInfo angle="0" centerX="${Math.round(width / 2)}" centerY="${Math.round(height / 2)}" rotateimage="1"/><hp:renderingInfo><hc:transMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/><hc:scaMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/><hc:rotMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/></hp:renderingInfo><hp:imgRect><hc:pt0 x="0" y="0"/><hc:pt1 x="${width}" y="0"/><hc:pt2 x="${width}" y="${height}"/><hc:pt3 x="0" y="${height}"/></hp:imgRect><hp:imgClip left="0" right="${width}" top="0" bottom="${height}"/><hp:inMargin left="0" right="0" top="0" bottom="0"/><hc:img binaryItemIDRef="${image.id}" bright="0" contrast="0" effect="REAL_PIC" alpha="0"/><hp:effects/><hp:sz width="${width}" widthRelTo="ABSOLUTE" height="${height}" heightRelTo="ABSOLUTE" protect="0"/><hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/><hp:outMargin left="0" right="0" top="0" bottom="0"/><hp:shapeComment>민원지 작성기에서 합성한 이미지</hp:shapeComment></hp:pic></hp:run>`;
 }
 
@@ -903,10 +922,7 @@ async function getHwpxTemplate() {
       const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
       hwpxTemplatePromise = Promise.resolve(bytes.buffer);
     } else {
-      hwpxTemplatePromise = fetch("hwpx-template.hwpx").then((response) => {
-        if (!response.ok) throw new Error("HWPX 템플릿을 불러오지 못했습니다.");
-        return response.arrayBuffer();
-      });
+      hwpxTemplatePromise = Promise.reject(new Error("배포 템플릿 데이터가 없습니다. 배포 ZIP을 다시 받아 주세요."));
     }
   }
   return hwpxTemplatePromise;
@@ -928,9 +944,13 @@ async function exportHwpx() {
   try {
     const exportSnapshot = JSON.parse(JSON.stringify(state.cases));
     if (!exportSnapshot.every(caseIsValid)) throw new Error("내보내기 시작 후 입력이 유효하지 않습니다.");
-    hwpxIdCounters = { table: 1000000001, object: 1147780917, instance: 74039094 };
     const template = await getHwpxTemplate();
     const zip = await window.JSZip.loadAsync(template);
+    const sectionXmlEntries = [];
+    for (const name of Object.keys(zip.files).filter((entry) => /^Contents\/section.*\.xml$/i.test(entry))) {
+      sectionXmlEntries.push(await zip.file(name).async("string"));
+    }
+    hwpxIdCounters = scanHwpxIdMaxima(sectionXmlEntries);
     zip.file("mimetype", "application/hwp+zip", { compression: "STORE" });
     const imagesByCase = [];
     for (const item of exportSnapshot) {
