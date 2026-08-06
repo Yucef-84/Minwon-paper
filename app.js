@@ -41,6 +41,7 @@ const defaultCase = () => ({
     photo3: [],
     photo4: [],
   },
+  uploadRequests: { map: 0, photo1: 0, photo2: 0, photo3: 0, photo4: 0 },
 });
 
 function imageDefaults() {
@@ -101,21 +102,12 @@ function bindInputs() {
           state.drag = null;
           state.shapeDrag = null;
         }
+        (LAYOUT_DEFINITIONS[item.layout]?.slots || []).forEach((slot) => autoFit(item, slot));
       }
       if (key === "author") {
         localStorage.setItem("minwonAuthor", input.value.trim());
       }
       render();
-      if (layoutChanged) {
-        const caseId = item.id;
-        const expectedLayout = item.layout;
-        requestAnimationFrame(() => {
-          const target = state.cases.find((candidate) => candidate.id === caseId);
-          if (!target || target.layout !== expectedLayout || activeCase().id !== caseId) return;
-          (LAYOUT_DEFINITIONS[target.layout]?.slots || []).forEach((slot) => autoFit(target, slot));
-          render();
-        });
-      }
     });
   });
 
@@ -184,13 +176,16 @@ function limitLines(value, maxLines) {
 
 function loadImageFile(file, slot) {
   const caseId = activeCase().id;
+  const targetCase = activeCase();
+  targetCase.uploadRequests[slot] = (targetCase.uploadRequests[slot] || 0) + 1;
+  const requestId = targetCase.uploadRequests[slot];
   clearGeneratedMap(slot);
   const reader = new FileReader();
   reader.onload = () => {
     const image = new Image();
     image.onload = () => {
       const item = state.cases.find((candidate) => candidate.id === caseId);
-      if (!item) return;
+      if (!item || item.uploadRequests[slot] !== requestId) return;
       item.images[slot] = reader.result;
       item.transforms[slot] = {
         ...imageDefaults(),
@@ -208,6 +203,7 @@ function loadImageFile(file, slot) {
 
 function clearImage(slot) {
   const item = activeCase();
+  item.uploadRequests[slot] = (item.uploadRequests[slot] || 0) + 1;
   item.images[slot] = null;
   item.transforms[slot] = imageDefaults();
   item.shapes[slot] = [];
@@ -374,18 +370,13 @@ function handleTool(action) {
 function autoFit(itemOrSlot, maybeSlot) {
   const item = typeof itemOrSlot === "string" ? activeCase() : itemOrSlot;
   const slot = typeof itemOrSlot === "string" ? itemOrSlot : maybeSlot;
-  const frame = $(`.image-frame[data-slot="${slot}"]`);
   const transform = item.transforms[slot];
-  if (!item.images[slot] || !frame || !transform.naturalWidth) return;
-  const rect = frame.getBoundingClientRect();
-  // Store transforms in the frame's unscaled CSS pixels. The page preview may
-  // be visually reduced to fit the editor, while HWPX uses the original size.
-  const frameWidth = frame.clientWidth || rect.width;
-  const frameHeight = frame.clientHeight || rect.height;
+  if (!item.images[slot] || !transform.naturalWidth) return;
+  const logicalSize = frameSize(slot, item);
   const rotated = Math.abs(transform.rotation % 180) === 90;
   const w = rotated ? transform.naturalHeight : transform.naturalWidth;
   const h = rotated ? transform.naturalWidth : transform.naturalHeight;
-  transform.scale = Math.max(frameWidth / w, frameHeight / h);
+  transform.scale = Math.max(logicalSize.width / w, logicalSize.height / h);
   transform.x = 0;
   transform.y = 0;
 }
@@ -575,6 +566,10 @@ function isEditableTarget(target) {
 }
 
 function printAll(titleOverride) {
+  if (!state.cases.every(caseIsValid)) {
+    alert("입력 오류를 먼저 수정해 주세요.");
+    return;
+  }
   const root = $("#printRoot");
   root.innerHTML = "";
   state.cases.forEach((item) => {
@@ -919,6 +914,10 @@ async function getHwpxTemplate() {
 
 async function exportHwpx() {
   const button = $("#hwpxSaveButton");
+  if (!state.cases.every(caseIsValid)) {
+    alert("입력 오류를 먼저 수정해 주세요.");
+    return;
+  }
   if (!window.JSZip) {
     alert("HWPX 생성 모듈을 불러오지 못했습니다. 인터넷 연결 후 다시 시도해 주세요.");
     return;
@@ -927,19 +926,21 @@ async function exportHwpx() {
   button.disabled = true;
   button.textContent = "HWPX 생성 중…";
   try {
+    const exportSnapshot = JSON.parse(JSON.stringify(state.cases));
+    if (!exportSnapshot.every(caseIsValid)) throw new Error("내보내기 시작 후 입력이 유효하지 않습니다.");
     hwpxIdCounters = { table: 1000000001, object: 1147780917, instance: 74039094 };
     const template = await getHwpxTemplate();
     const zip = await window.JSZip.loadAsync(template);
     zip.file("mimetype", "application/hwp+zip", { compression: "STORE" });
     const imagesByCase = [];
-    for (const item of state.cases) {
+    for (const item of exportSnapshot) {
       const images = {};
       for (const slot of visibleSlots(item)) images[slot] = await composeImage(item, slot);
       imagesByCase.push(images);
     }
     const imageRefs = imagesByCase.map((images, caseIndex) => {
       const refs = {};
-      visibleSlots(state.cases[caseIndex]).forEach((slot, slotIndex) => {
+      visibleSlots(exportSnapshot[caseIndex]).forEach((slot, slotIndex) => {
         refs[slot] = { id: `image${caseIndex}-${slotIndex + 1}`, width: images[slot].width, height: images[slot].height };
       });
       Object.entries(refs).forEach(([slot, image]) => {
@@ -949,7 +950,7 @@ async function exportHwpx() {
     });
 
     const templateSectionXml = await zip.file("Contents/section0.xml").async("string");
-    let sectionXml = buildHwpxSection(state.cases, imageRefs, templateSectionXml);
+    let sectionXml = buildHwpxSection(exportSnapshot, imageRefs, templateSectionXml);
     zip.file("Contents/section0.xml", sectionXml);
     const templateHeaderXml = await zip.file("Contents/header.xml").async("string");
     zip.file("Contents/header.xml", ensureHwpxTableStyles(templateHeaderXml));
@@ -964,12 +965,12 @@ async function exportHwpx() {
       .map((image) => `<opf:item id="${image.id}" href="BinData/${image.id}.png" media-type="image/png" isEmbeded="1"/>`)
       .join("");
     zip.file("Contents/content.hpf", contentHpf.replace("</opf:manifest>", `${hpfEntries}</opf:manifest>`));
-    zip.file("Preview/PrvText.txt", state.cases.map((item) => `${item.title}\n${item.address}\n${item.request}`).join("\n\n"));
+    zip.file("Preview/PrvText.txt", exportSnapshot.map((item) => `${item.title}\n${item.address}\n${item.request}`).join("\n\n"));
     const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${buildQuickSaveName(activeCase()) || "민원_현장사진"}.hwpx`;
+    link.download = `${buildQuickSaveName(exportSnapshot[state.activeIndex] || exportSnapshot[0]) || "민원_현장사진"}.hwpx`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -978,7 +979,7 @@ async function exportHwpx() {
     console.error(error);
     alert(`HWPX 내보내기에 실패했습니다.\n${error.message || error}`);
   } finally {
-    button.disabled = false;
+    button.disabled = !state.cases.every(caseIsValid);
     button.textContent = previousText;
   }
 }
